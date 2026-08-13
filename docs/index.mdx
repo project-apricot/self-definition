@@ -1,0 +1,87 @@
+---
+title: Self Definition
+description: Lets an ASP.NET Core service state its own external base address, validated at startup.
+---
+
+# Self Definition
+
+A service usually knows less about itself than its callers do. Behind a load balancer, a gateway or
+an ingress controller, the address a request arrives on is rarely the address the outside world uses:
+the scheme has been terminated, the host rewritten, a path base added. Yet the service is the thing
+that has to write absolute URLs — password-reset links, webhook callbacks, OAuth redirect URIs,
+`Location` headers.
+
+This library lets the service be told, rather than guess.
+
+## Packages
+
+| Package | What it is |
+| --- | --- |
+| `ApricotFramework.SelfDefinition.AspNetCore` | Registration, configuration binding, startup validation and `ISelfDefinitionProvider` |
+
+It takes everything it needs from the ASP.NET Core shared framework, so it has zero NuGet
+dependencies and adds nothing to your dependency tree.
+
+## Install
+
+```bash
+dotnet add package ApricotFramework.SelfDefinition.AspNetCore
+```
+
+## The model
+
+One interface with one member:
+
+```csharp
+public interface ISelfDefinitionProvider
+{
+    string GetExternalBaseAddress();
+}
+```
+
+One configuration key backs it:
+
+```json
+{
+  "SelfDefinition": {
+    "ExternalBaseAddress": "https://api.example.com/gateway"
+  }
+}
+```
+
+The value is **required**. It is checked when the host starts, so a service that cannot describe
+itself does not begin serving traffic — see [ASP.NET Core](aspnetcore) for what that looks like.
+
+## Why not just read the request?
+
+Because `HttpRequest.Host` is supplied by the client. An attacker who sends
+`Host: evil.example.net` to a service that builds links from the request gets those links pointed at
+their own host — and a password-reset e-mail carrying an attacker-controlled link is the textbook
+version of that bug. Configuration cannot be spoofed by a caller.
+
+The example app in this repository has a `/compare` endpoint that shows both side by side; sending it
+a forged `Host` header moves one value and not the other.
+
+> **Note.** If you do want the request-derived origin — for a genuinely multi-tenant host, say —
+> nothing stands in your way: `ISelfDefinitionProvider` is registered with `TryAddSingleton`, so your
+> own implementation wins. Reach for `ForwardedHeaders` middleware and an allow-list of hosts if you
+> do, and understand that you are opting into the risk above.
+
+## The trailing-slash contract
+
+`GetExternalBaseAddress()` never returns a trailing slash, whatever was configured. That makes one
+composition style correct everywhere:
+
+```csharp
+$"{selfDefinition.GetExternalBaseAddress()}/api/things/42"
+```
+
+Configure `https://example.com/api`, `https://example.com/api/` or `https://example.com/api///` and
+all three yield `https://example.com/api`. Surrounding whitespace is trimmed too, since configuration
+values picked up from environment variables and secret stores often carry it.
+
+Nothing else is normalised. The case you wrote is preserved, and an international host is not
+converted to punycode, so `https://пример.рф` stays as typed rather than becoming
+`https://xn--e1afmkfd.xn--p1ai`.
+
+Continue with [usage](usage) or [ASP.NET Core](aspnetcore).

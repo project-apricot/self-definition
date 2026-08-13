@@ -1,0 +1,136 @@
+---
+title: ASP.NET Core
+description: Registration, configuration binding, startup validation and replacing the provider.
+---
+
+# ASP.NET Core
+
+`ApricotFramework.SelfDefinition.AspNetCore` wires self-definition into an ASP.NET Core host:
+registration, configuration binding and startup validation.
+
+```bash
+dotnet add package ApricotFramework.SelfDefinition.AspNetCore
+```
+
+## Registration
+
+```csharp
+using ApricotFramework.SelfDefinition.AspNetCore.Extensions;
+
+builder.Services.AddSelfDefinition(builder.Configuration);
+```
+
+That binds the `SelfDefinition` configuration section, adds the options validator, and registers
+`ISelfDefinitionProvider` as a singleton.
+
+```json
+{
+  "SelfDefinition": {
+    "ExternalBaseAddress": "https://api.example.com/gateway"
+  }
+}
+```
+
+Two other overloads are available — a different section name, and configuration in code:
+
+```csharp
+builder.Services.AddSelfDefinition(builder.Configuration, "Service:Self");
+
+builder.Services.AddSelfDefinition(options =>
+{
+    options.ExternalBaseAddress = "https://api.example.com/gateway";
+});
+```
+
+Calling `AddSelfDefinition` twice is harmless: the provider and the validator are registered with
+`TryAdd`, so exactly one of each ends up in the container.
+
+## Startup validation
+
+`ExternalBaseAddress` is required, and it is checked when the host starts rather than on the first
+request that needs a link. A service that cannot describe itself never begins serving traffic.
+
+| Rejected | Because |
+| --- | --- |
+| missing, empty or whitespace | there is no address to build links from |
+| not an absolute URL — `example.com`, `https://` | a relative value cannot identify an origin |
+| a scheme other than `http`/`https` — `ftp://…`, `/api`, `//example.com` | not reachable as a web origin |
+| embedded credentials — `https://user:pass@…` | they would be copied into every link |
+| a query string — `https://example.com/?a=b` | anything appended lands after the query, and is ignored |
+| a fragment — `https://example.com/#x` | anything appended lands inside the fragment |
+
+Accepted, and normalised: any number of trailing slashes, and surrounding whitespace.
+
+> **Note.** `/api` is rejected by the *scheme* rule rather than the absolute-URL rule, which reads
+> oddly in a log until you know why. A bare path and a scheme-relative `//example.com` both parse as
+> perfectly valid absolute URIs under the `file` scheme, so requiring "absolute" alone would let them
+> through and the service would emit `file://` links. The scheme allow-list is what actually stops
+> them.
+
+The failure looks like this, and the process exits without opening a port:
+
+```
+Microsoft.Extensions.Options.OptionsValidationException: ExternalBaseAddress 'ftp://example.com'
+uses the 'ftp' scheme, but only http and https are supported. Include the scheme explicitly, for
+example 'https://api.example.com'.
+```
+
+> **Warning.** This is a behavioural difference worth planning for if you are moving from a
+> configuration that never set the value. Previously a missing address failed the individual request
+> that needed a link; now it stops the deployment. That is deliberate — a service emitting wrong links
+> is harder to notice, and worse, than one that refuses to start.
+
+In a bare `ServiceCollection` with no host to run the startup hook, the same validation runs the first
+time the options are resolved, so the failure surfaces on first use instead.
+
+## Reloading
+
+The registered provider reads the options through `IOptionsMonitor` on every call, so editing
+`appsettings.json` changes the address without restarting the host.
+
+The validator runs again on every reload, so a reload is not a way to slip a value past the checks the
+host applied at startup. A broken edit is refused rather than adopted, and repairing the file recovers
+without a restart.
+
+> **Note.** Where that refusal surfaces depends on which thread fires the configuration change token,
+> because `IOptionsMonitor` re-creates the options eagerly in its change callback. Under a file
+> watcher — the normal case — the callback runs on a background thread, the failure there is
+> unobserved, and the next `GetExternalBaseAddress()` throws `OptionsValidationException`. If your code
+> calls `IConfigurationRoot.Reload()` itself, that callback runs inline and the same validation failure
+> comes straight back out of `Reload()`, wrapped in an `AggregateException`. Either way the bad value
+> is never served.
+
+## Replacing what is registered
+
+`ISelfDefinitionProvider` is registered with `TryAddSingleton`, so your own registration wins — in
+either order:
+
+```csharp
+builder.Services.AddSingleton<ISelfDefinitionProvider, MyProvider>();
+builder.Services.AddSelfDefinition(builder.Configuration);
+```
+
+This is the supported route to a request-derived address, if you decide you want one. Before you do,
+read the warning in the [overview](index): the request's host is client-supplied, and links built from
+it are only as trustworthy as the caller.
+
+To change where the settings come from while keeping the parsing and trimming, derive from the
+built-in provider instead and override one method:
+
+```csharp
+public sealed class TenantSelfDefinitionProvider : OptionsAwareSelfDefinitionProvider
+{
+    public TenantSelfDefinitionProvider(IOptionsMonitor<SelfDefinitionOptions> optionsMonitor)
+        : base(optionsMonitor)
+    {
+    }
+
+    protected override SelfDefinitionOptions GetCurrentOptions()
+    {
+        return new SelfDefinitionOptions { ExternalBaseAddress = ResolveForCurrentTenant() };
+    }
+}
+```
+
+Note that a provider registered this way bypasses startup validation — the validator checks the
+configured options, not whatever your override returns.
