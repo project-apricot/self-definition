@@ -1,0 +1,90 @@
+---
+title: Usage
+description: Injecting the provider, composing absolute URLs, and what the returned value guarantees.
+---
+
+# Usage
+
+Inject `ISelfDefinitionProvider` wherever a link has to be absolute.
+
+```csharp
+using ApricotFramework.SelfDefinition.AspNetCore;
+
+public sealed class PasswordResetMailer
+{
+    private readonly ISelfDefinitionProvider selfDefinition;
+
+    public PasswordResetMailer(ISelfDefinitionProvider selfDefinition)
+    {
+        this.selfDefinition = selfDefinition;
+    }
+
+    public string BuildResetLink(string token)
+    {
+        return $"{this.selfDefinition.GetExternalBaseAddress()}/account/reset?token={token}";
+    }
+}
+```
+
+It is a singleton, so it can be consumed from any lifetime — a singleton background service as
+readily as a scoped request handler.
+
+## Why a method and not a property
+
+`GetExternalBaseAddress()` reads the current configuration on every call, so it can return a
+different value after a reload and it can throw. A property that did either would be lying about its
+cost; the method name says the work happens when you ask.
+
+## What the returned value guarantees
+
+Given a configuration that passed startup validation, the returned string is:
+
+| Guarantee | Consequence |
+| --- | --- |
+| An absolute `http` or `https` URL | Safe to hand to `HttpClient`, or to put in an e-mail |
+| No trailing slash | `$"{address}/{path}"` yields exactly one separator |
+| No surrounding whitespace | Safe to concatenate without pre-trimming |
+| No query string or fragment | Anything you append lands in the path, where you meant it |
+| No embedded credentials | Nothing secret is copied into a link |
+| Path base preserved | A service mounted at `/gateway` keeps it |
+
+What it does *not* guarantee is a particular spelling: case and international hostnames come back as
+configured.
+
+```csharp
+// Configured as "HTTPS://EXAMPLE.COM/Api/" -> returned as "HTTPS://EXAMPLE.COM/Api"
+```
+
+If you need a canonical form, parse it yourself. `new Uri(address).AbsoluteUri` lower-cases the scheme
+and host and percent-encodes the path, but leaves an international host in Unicode; `Uri.IdnHost` is
+what gives you the punycode form.
+
+## Composing with `Uri` instead of strings
+
+String concatenation is the documented style because the trailing-slash rule makes it safe. If you
+prefer `Uri`, be aware that relative resolution *drops the last path segment* unless the base ends in
+a slash — the opposite of what this library returns:
+
+```csharp
+var address = selfDefinition.GetExternalBaseAddress();   // https://example.com/gateway
+
+new Uri(new Uri(address), "api/things");                 // https://example.com/api/things  <- /gateway lost
+new Uri(new Uri(address + "/"), "api/things");           // https://example.com/gateway/api/things
+```
+
+> **Warning.** This is RFC 3986 resolution behaving exactly as specified, not a quirk. If you build
+> `Uri` values from the base address, add the slash back first.
+
+## Reading it outside a request
+
+There is no dependency on `HttpContext`, so the provider works identically in a hosted background
+service, an `IHostedService` startup task, or a message consumer — the places where there is no
+request to infer an origin from, and where guessing is not even an option.
+
+## Failure
+
+Registered through `AddSelfDefinition`, the address has already been validated by the time any of
+your code runs, so `GetExternalBaseAddress()` does not throw in practice. It throws
+`InvalidOperationException` only if the settings are unusable at the moment of the call — reachable
+by constructing `OptionsAwareSelfDefinitionProvider` by hand around options nothing has validated.
+See [ASP.NET Core](aspnetcore) for the startup path.

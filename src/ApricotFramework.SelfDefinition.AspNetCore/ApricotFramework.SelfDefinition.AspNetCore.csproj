@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Lets an ASP.NET Core service state facts about itself: its external base address, bound from configuration, validated when the host starts, and re-read on configuration reload — so code that builds absolute links never has to guess the public origin.</Description>
+    <PackageTags>aspnetcore;configuration;options;baseaddress;uri;absoluteurl;dependencyinjection</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+</Project>
