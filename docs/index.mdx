@@ -50,7 +50,7 @@ One configuration key backs it:
 ```
 
 The value is **required**. It is checked when the host starts, so a service that cannot describe
-itself does not begin serving traffic — see [ASP.NET Core](aspnetcore) for what that looks like.
+itself does not begin serving traffic — see [ASP.NET Core](./aspnetcore.mdx) for what that looks like.
 
 ## Why not just read the request?
 
@@ -84,4 +84,4 @@ Nothing else is normalised. The case you wrote is preserved, and an internationa
 converted to punycode, so `https://пример.рф` stays as typed rather than becoming
 `https://xn--e1afmkfd.xn--p1ai`.
 
-Continue with [usage](usage) or [ASP.NET Core](aspnetcore).
+Continue with [usage](./usage.mdx) or [ASP.NET Core](./aspnetcore.mdx).

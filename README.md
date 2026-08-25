@@ -48,4 +48,4 @@ absolute `http`/`https` URL, embedded credentials, a query string, and a fragmen
 path such as `/api` is rejected too — it parses as an absolute `file:` URI, so it fails the scheme
 check rather than the absolute-URL one.
 
-Full documentation: <https://projectapricot.dev>
+Full documentation: <https://projectapricot.dev/docs/self-definition>
